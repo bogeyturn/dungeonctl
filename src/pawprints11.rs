@@ -27,6 +27,22 @@ pub struct PawPrints {
     write_type: WriteType,
 }
 
+bitflags::bitflags! {
+    /// Bitflags representing the current state of the paw buttons.
+    ///
+    /// Multiple buttons may be active at the same time.
+    /// A value of `0` indicates that no buttons are pressed.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct PawButtons: u8 {
+        /// The bottom button is weakly pressed.
+        const BOTTOM_WEAK = 0b0000_0001;
+        /// The bottom button is strongly pressed.
+        const BOTTOM_STRONG = 0b0000_0010;
+        /// The top button is pressed.
+        const TOP = 0b0000_0100;
+    }
+}
+
 impl PawPrints {
     /// Begin building a connection to a PawPrints V1.1 device.
     pub fn connect() -> PawPrintsBuilder {
@@ -677,8 +693,174 @@ pub struct DetectedRange {
     pub upper: i16,
 }
 
+/// Calibrated acceleration values for the three sensor axes.
+///
+/// Values are stored as floating-point numbers to allow conversion into
+/// physical units and derived calculations such as tilt or magnitude.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Accel {
+    /// Acceleration along the X axis.
+    pub x: f32,
+    /// Acceleration along the Y axis.
+    pub y: f32,
+    /// Acceleration along the Z axis.
+    pub z: f32,
+}
+
+/// Raw acceleration readings received directly from the sensor.
+///
+/// Each axis is stored as a signed 8-bit value before any scaling,
+/// calibration, or unit conversion is applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawAccel {
+    /// Raw reading for the X axis.
+    pub x: i8,
+    /// Raw reading for the Y axis.
+    pub y: i8,
+    /// Raw reading for the Z axis.
+    pub z: i8,
+}
+
+impl From<RawAccel> for Accel {
+    fn from(raw: RawAccel) -> Self {
+        Self {
+            x: raw.x as f32,
+            y: raw.y as f32,
+            z: raw.z as f32,
+        }
+    }
+}
+
+impl RawAccel {
+    /// convert to usable type
+    pub fn to_accel(self) -> Accel {
+        Accel::from(self)
+    }
+
+    fn from_u8(x: u8, y: u8, z: u8) -> Self {
+        Self {
+            x: x as i8,
+            y: y as i8,
+            z: z as i8,
+        }
+    }
+}
+/// This is typically used to describe which side of the sensor is pointing
+
+/// most strongly in the direction of acceleration, such as gravity.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+
+pub enum AxisDirection {
+    /// Positive X direction.
+    PosX,
+    /// Negative X direction.
+    NegX,
+    /// Positive Y direction.
+    PosY,
+    /// Negative Y direction.
+    NegY,
+    /// Positive Z direction.
+    PosZ,
+    /// Negative Z direction.
+    NegZ,
+}
+impl Accel {
+    /// Total acceleration vector magnitude.
+    pub fn magnitude(&self) -> f32 {
+        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+
+    /// Returns the vector normalized to length 1.
+    pub fn normalized(&self) -> Self {
+        let mag = self.magnitude();
+
+        if mag == 0.0 {
+            return *self;
+        }
+
+        Self {
+            x: self.x / mag,
+            y: self.y / mag,
+            z: self.z / mag,
+        }
+    }
+
+    /// Roll angle in radians.
+    pub fn roll(&self) -> f32 {
+        self.y.atan2(self.z)
+    }
+
+    /// Pitch angle in radians.
+    pub fn pitch(&self) -> f32 {
+        (-self.x).atan2((self.y * self.y + self.z * self.z).sqrt())
+    }
+
+    /// Roll angle in degrees.
+    pub fn roll_degrees(&self) -> f32 {
+        self.roll().to_degrees()
+    }
+
+    /// Pitch angle in degrees.
+    pub fn pitch_degrees(&self) -> f32 {
+        self.pitch().to_degrees()
+    }
+
+    /// Which axis currently carries the largest acceleration component.
+    pub fn dominant_axis(&self) -> AxisDirection {
+        let ax = self.x.abs();
+        let ay = self.y.abs();
+        let az = self.z.abs();
+
+        if ax >= ay && ax >= az {
+            if self.x >= 0.0 {
+                AxisDirection::PosX
+            } else {
+                AxisDirection::NegX
+            }
+        } else if ay >= az {
+            if self.y >= 0.0 {
+                AxisDirection::PosY
+            } else {
+                AxisDirection::NegY
+            }
+        } else if self.z >= 0.0 {
+            AxisDirection::PosZ
+        } else {
+            AxisDirection::NegZ
+        }
+    }
+
+    /// Difference between this reading and another reading.
+    pub fn delta(&self, other: &Self) -> Self {
+        Self {
+            x: self.x - other.x,
+            y: self.y - other.y,
+            z: self.z - other.z,
+        }
+    }
+
+    /// Angle between two acceleration vectors, in radians.
+    pub fn angle_to(&self, other: &Self) -> f32 {
+        let dot = self.x * other.x + self.y * other.y + self.z * other.z;
+
+        let mags = self.magnitude() * other.magnitude();
+
+        if mags == 0.0 {
+            return 0.0;
+        }
+
+        (dot / mags).clamp(-1.0, 1.0).acos()
+    }
+
+    /// Angle between two acceleration vectors, in degrees.
+    pub fn angle_to_degrees(&self, other: &Self) -> f32 {
+        self.angle_to(other).to_degrees()
+    }
+}
+
 /// A parsed V1.1 notification.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PawPrintsEvent {
     /// `0x51` status and battery report.
     Status {
@@ -721,15 +903,11 @@ pub enum PawPrintsEvent {
         /// Packet sequence number.
         sequence: u8,
         /// Whether the button is pressed.
-        pressed: bool,
+        pressed: PawButtons,
         /// Overall acceleration sample.
         acceleration: u8,
-        /// Signed X angle.
-        x: i8,
-        /// Signed Y angle.
-        y: i8,
-        /// Signed Z angle.
-        z: i8,
+        /// acceleration
+        accel: RawAccel,
         /// External-voltage sample in centivolts.
         external_voltage: u8,
     },
@@ -793,11 +971,9 @@ impl PawPrintsEvent {
             ] if color().is_some() => Self::PhysicalData {
                 main_color: color().unwrap(),
                 sequence: *sequence,
-                pressed: *pressed != 0,
+                pressed: PawButtons::from_bits_truncate(*pressed),
                 acceleration: *acceleration,
-                x: *x as i8,
-                y: *y as i8,
-                z: *z as i8,
+                accel: RawAccel::from_u8(*x, *y, *z),
                 external_voltage: *external_voltage,
             },
             [0xf1, 0x61, rest @ ..] if rest.len() == 12 => Self::DetectedAngles {
