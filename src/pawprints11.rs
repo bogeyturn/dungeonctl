@@ -1317,11 +1317,13 @@ mod tests {
             PawPrintsEvent::PhysicalData {
                 main_color: MainColor::Yellow,
                 sequence: 9,
-                pressed: true,
+                pressed: PawButtons::BOTTOM_WEAK,
                 acceleration: 200,
-                x: -1,
-                y: -128,
-                z: 127,
+                accel: RawAccel {
+                    x: -1,
+                    y: -128,
+                    z: 127,
+                },
                 external_voltage: 210,
             },
         );

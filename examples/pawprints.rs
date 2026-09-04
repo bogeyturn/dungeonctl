@@ -23,16 +23,17 @@ async fn main() -> eyre::Result<()> {
     paw.run_events(|event| async move {
         match event {
             PawPrintsEvent::PhysicalData {
-                x,
-                y,
-                z,
+                accel,
                 pressed,
                 acceleration,
                 external_voltage,
                 ..
             } => {
                 println!(
-                    "physical: pressed={pressed} acceleration={acceleration} x={x} y={y} z={z} voltage={external_voltage}"
+                    "physical: pressed={pressed:?} acceleration={acceleration} x={} y={} z={} voltage={external_voltage}",
+                    accel.x,
+                    accel.y,
+                    accel.z,
                 );
             }
 
